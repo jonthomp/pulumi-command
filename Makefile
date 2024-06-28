@@ -7,7 +7,6 @@ NODE_MODULE_NAME := @pulumi/command
 NUGET_PKG_NAME   := Pulumi.Command
 
 PROVIDER        := pulumi-resource-${PACK}
-VERSION         ?= $(shell pulumictl get version)
 PROVIDER_PATH   := provider
 VERSION_PATH    := ${PROVIDER_PATH}/pkg/version.Version
 
@@ -18,6 +17,12 @@ export GOPATH   := $(shell go env GOPATH)
 
 WORKING_DIR     := $(shell pwd)
 TESTPARALLELISM := 4
+
+# Override during CI using `make [TARGET] PROVIDER_VERSION=""` or by setting a PROVIDER_VERSION environment variable
+# Local & branch builds will just used this fixed default version unless specified
+PROVIDER_VERSION ?= 1.0.0-alpha.0+dev
+# Use this normalised version everywhere rather than the raw input to ensure consistency.
+VERSION_GENERIC = $(shell pulumictl convert-version --language generic --version "$(PROVIDER_VERSION)")
 
 # Need to pick up locally pinned pulumi-langage-* plugins.
 export PULUMI_IGNORE_AMBIENT_PLUGINS = true
@@ -46,16 +51,20 @@ codegen: $(SCHEMA_FILE) sdk/dotnet sdk/go sdk/nodejs sdk/python sdk/java
 .PHONY: sdk/%
 sdk/%: $(SCHEMA_FILE)
 	rm -rf $@
-	$(PULUMI) package gen-sdk --language $* $(SCHEMA_FILE)
+	$(PULUMI) package gen-sdk --language $* $(SCHEMA_FILE) --version "${VERSION_GENERIC}"
+
+sdk/java: $(SCHEMA_FILE)
+	rm -rf $@
+	$(PULUMI) package gen-sdk --language java $(SCHEMA_FILE)
 
 sdk/python: $(SCHEMA_FILE)
 	rm -rf $@
-	$(PULUMI) package gen-sdk --language python $(SCHEMA_FILE)
+	$(PULUMI) package gen-sdk --language python $(SCHEMA_FILE) --version "${VERSION_GENERIC}"
 	cp README.md ${PACKDIR}/python/
 
 sdk/dotnet: $(SCHEMA_FILE)
 	rm -rf $@
-	$(PULUMI) package gen-sdk --language dotnet $(SCHEMA_FILE)
+	$(PULUMI) package gen-sdk --language dotnet $(SCHEMA_FILE) --version "${VERSION_GENERIC}"
 	# Copy the logo to the dotnet directory before building so it can be included in the nuget package archive.
 	# https://github.com/pulumi/pulumi-command/issues/243
 	cd ${PACKDIR}/dotnet/&& \
@@ -64,38 +73,32 @@ sdk/dotnet: $(SCHEMA_FILE)
 
 .PHONY: provider
 provider:
-	cd provider && go build -o $(WORKING_DIR)/bin/${PROVIDER} -ldflags "-X ${PROJECT}/${VERSION_PATH}=${VERSION}" $(PROJECT)/${PROVIDER_PATH}/cmd/$(PROVIDER)
+	cd provider && go build -o $(WORKING_DIR)/bin/${PROVIDER} -ldflags "-X ${PROJECT}/${VERSION_PATH}=${VERSION_GENERIC}" $(PROJECT)/${PROVIDER_PATH}/cmd/$(PROVIDER)
 
-.PHONY: provider
+.PHONY: provider_debug
 provider_debug:
-	(cd provider && go build -o $(WORKING_DIR)/bin/${PROVIDER} -gcflags="all=-N -l" -ldflags "-X ${PROJECT}/${VERSION_PATH}=${VERSION}" $(PROJECT)/${PROVIDER_PATH}/cmd/$(PROVIDER))
+	(cd provider && go build -o $(WORKING_DIR)/bin/${PROVIDER} -gcflags="all=-N -l" -ldflags "-X ${PROJECT}/${VERSION_PATH}=${VERSION_GENERIC}" $(PROJECT)/${PROVIDER_PATH}/cmd/$(PROVIDER))
 
 test_provider: tidy_provider
-	cd provider/tests && go test -short -v -count=1 -cover -timeout 2h -parallel ${TESTPARALLELISM} ./...
+	cd provider && go test -short -v -count=1 -cover -timeout 2h -parallel ${TESTPARALLELISM} ./...
 
-dotnet_sdk: DOTNET_VERSION := $(shell pulumictl get version --language dotnet)
 dotnet_sdk: sdk/dotnet
 	cd ${PACKDIR}/dotnet/&& \
-		echo "${DOTNET_VERSION}" >version.txt && \
-		dotnet build /p:Version=${DOTNET_VERSION}
+		echo "${VERSION_GENERIC}" > version.txt && \
+		dotnet build
 
 go_sdk:	sdk/go
 
-nodejs_sdk: VERSION := $(shell pulumictl get version --language javascript)
 nodejs_sdk: sdk/nodejs
 	cd ${PACKDIR}/nodejs/ && \
 		yarn install && \
 		yarn run tsc
 	cp README.md LICENSE ${PACKDIR}/nodejs/package.json ${PACKDIR}/nodejs/yarn.lock ${PACKDIR}/nodejs/bin/
-	sed -i.bak 's/$${VERSION}/$(VERSION)/g' ${PACKDIR}/nodejs/bin/package.json
 
-python_sdk: PYPI_VERSION := $(shell pulumictl get version --language python)
 python_sdk: sdk/python
 	cp README.md ${PACKDIR}/python/
 	cd ${PACKDIR}/python/ && \
 		rm -rf ./bin/ ../python.bin/ && cp -R . ../python.bin && mv ../python.bin ./bin && \
-		sed -i.bak -e 's/^  version = .*/  version = "$(PYPI_VERSION)"/g' ./bin/pyproject.toml && \
-		rm ./bin/pyproject.toml.bak && \
 		python3 -m venv venv && \
 		./venv/bin/python -m pip install build && \
 		cd ./bin && \
@@ -104,7 +107,7 @@ python_sdk: sdk/python
 bin/pulumi-java-gen::
 	echo pulumi-java-gen is no longer necessary
 
-java_sdk:: PACKAGE_VERSION := $(shell pulumictl get version --language generic)
+java_sdk:: PACKAGE_VERSION := $(VERSION_GENERIC)
 java_sdk:: sdk/java
 	cd sdk/java/ && \
 		gradle --console=plain build

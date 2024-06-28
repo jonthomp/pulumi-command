@@ -9,10 +9,81 @@ import * as utilities from "../utilities";
 
 /**
  * A local command to be executed.
- * This command can be inserted into the life cycles of other resources using the
- * `dependsOn` or `parent` resource options. A command is considered to have
- * failed when it finished with a non-zero exit code. This will fail the CRUD step
- * of the `Command` resource.
+ *
+ * This command can be inserted into the life cycles of other resources using the `dependsOn` or `parent` resource options. A command is considered to have failed when it finished with a non-zero exit code. This will fail the CRUD step of the `Command` resource.
+ *
+ * ## Example Usage
+ *
+ * ### Basic Example
+ *
+ * This example shows the simplest use case, simply running a command on `create` in the Pulumi lifecycle.
+ *
+ * ```typescript
+ * import { local } from "@pulumi/command";
+ *
+ * const random = new local.Command("random", {
+ *     create: "openssl rand -hex 16",
+ * });
+ *
+ * export const output = random.stdout;
+ * ```
+ *
+ * ### Invoking a Lambda during Pulumi Deployment
+ *
+ * This example show using a local command to invoke an AWS Lambda once it's deployed. The Lambda invocation could also depend on other resources.
+ *
+ * ```typescript
+ * import * as aws from "@pulumi/aws";
+ * import { local } from "@pulumi/command";
+ * import { getStack } from "@pulumi/pulumi";
+ *
+ * const f = new aws.lambda.CallbackFunction("f", {
+ *     publish: true,
+ *     callback: async (ev: any) => {
+ *         return `Stack ${ev.stackName} is deployed!`;
+ *     }
+ * });
+ *
+ * const invoke = new local.Command("execf", {
+ *     create: `aws lambda invoke --function-name "$FN" --payload '{"stackName": "${getStack()}"}' --cli-binary-format raw-in-base64-out out.txt >/dev/null && cat out.txt | tr -d '"'  && rm out.txt`,
+ *     environment: {
+ *         FN: f.qualifiedArn,
+ *         AWS_REGION: aws.config.region!,
+ *         AWS_PAGER: "",
+ *     },
+ * }, { dependsOn: f })
+ *
+ * export const output = invoke.stdout;
+ * ```
+ *
+ * ### Using Triggers
+ *
+ * This example defines several trigger values of various kinds. Changes to any of them will cause `cmd` to be re-run.
+ *
+ * ```typescript
+ * import * as pulumi from "@pulumi/pulumi";
+ * import * as command from "@pulumi/command";
+ * import * as random from "@pulumi/random";
+ *
+ * const str = "foo";
+ * const fileAsset = new pulumi.asset.FileAsset("Pulumi.yaml");
+ * const rand = new random.RandomString("rand", {length: 5});
+ * const localFile = new command.local.Command("localFile", {
+ *     create: "touch foo.txt",
+ *     archivePaths: ["*.txt"],
+ * });
+ *
+ * const cmd = new command.local.Command("cmd", {
+ *     create: "echo create > op.txt",
+ *     delete: "echo delete >> op.txt",
+ *     triggers: [
+ *         str,
+ *         rand.result,
+ *         fileAsset,
+ *         localFile.archive,
+ *     ],
+ * });
+ * ```
  */
 export class Command extends pulumi.CustomResource {
     /**
@@ -167,7 +238,7 @@ export class Command extends pulumi.CustomResource {
      * stdout and stderr as outputs. If there might be secrets in the output, you can disable logging here and mark the
      * outputs as secret via 'additionalSecretOutputs'. Defaults to logging both stdout and stderr.
      */
-    public readonly logging!: pulumi.Output<enums.common.Logging | undefined>;
+    public readonly logging!: pulumi.Output<enums.local.Logging | undefined>;
     /**
      * The standard error of the command's process
      */
@@ -181,7 +252,10 @@ export class Command extends pulumi.CustomResource {
      */
     public /*out*/ readonly stdout!: pulumi.Output<string>;
     /**
-     * Trigger replacements on changes to this input.
+     * Trigger a resource replacement on changes to any of these values. The
+     * trigger values can be of any type. If a value is different in the current update compared to the
+     * previous update, the resource will be replaced, i.e., the "create" command will be re-run.
+     * Please see the resource documentation for examples.
      */
     public readonly triggers!: pulumi.Output<any[] | undefined>;
     /**
@@ -365,13 +439,16 @@ export interface CommandArgs {
      * stdout and stderr as outputs. If there might be secrets in the output, you can disable logging here and mark the
      * outputs as secret via 'additionalSecretOutputs'. Defaults to logging both stdout and stderr.
      */
-    logging?: pulumi.Input<enums.common.Logging>;
+    logging?: pulumi.Input<enums.local.Logging>;
     /**
      * Pass a string to the command's process as standard in
      */
     stdin?: pulumi.Input<string>;
     /**
-     * Trigger replacements on changes to this input.
+     * Trigger a resource replacement on changes to any of these values. The
+     * trigger values can be of any type. If a value is different in the current update compared to the
+     * previous update, the resource will be replaced, i.e., the "create" command will be re-run.
+     * Please see the resource documentation for examples.
      */
     triggers?: pulumi.Input<any[]>;
     /**

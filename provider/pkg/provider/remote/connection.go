@@ -15,6 +15,7 @@
 package remote
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -22,7 +23,6 @@ import (
 
 	p "github.com/pulumi/pulumi-go-provider"
 	"github.com/pulumi/pulumi-go-provider/infer"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/retry"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -60,7 +60,7 @@ func (c *Connection) Annotate(a infer.Annotator) {
 	a.SetDefault(&c.User, "root")
 	a.Describe(&c.Password, "The password we should use for the connection.")
 	a.Describe(&c.Host, "The address of the resource to connect to.")
-	a.Describe(&c.Port, "The port to connect to.")
+	a.Describe(&c.Port, "The port to connect to. Defaults to 22.")
 	a.SetDefault(&c.Port, 22)
 	a.Describe(&c.PrivateKey, "The contents of an SSH key to use for the connection. This takes preference over the password if provided.")
 	a.Describe(&c.PrivateKeyPassword, "The password to use in case the private key is encrypted.")
@@ -120,7 +120,7 @@ func (con *connectionBase) SShConfig() (*ssh.ClientConfig, error) {
 	return config, nil
 }
 
-func dialWithRetry[T any](ctx p.Context, msg string, maxAttempts int, f func() (T, error)) (T, error) {
+func dialWithRetry[T any](ctx context.Context, msg string, maxAttempts int, f func() (T, error)) (T, error) {
 	var userError error
 	_, data, err := retry.Until(ctx, retry.Acceptor{
 		Accept: func(try int, _ time.Duration) (bool, any, error) {
@@ -140,7 +140,7 @@ func dialWithRetry[T any](ctx p.Context, msg string, maxAttempts int, f func() (
 			} else {
 				limit = fmt.Sprintf("%d", maxAttempts)
 			}
-			ctx.LogStatusf(diag.Info, "%s %d/%s failed: retrying",
+			p.GetLogger(ctx).InfoStatusf("%s %d/%s failed: retrying",
 				msg, dials, limit)
 			return false, nil, nil
 		},
@@ -154,7 +154,7 @@ func dialWithRetry[T any](ctx p.Context, msg string, maxAttempts int, f func() (
 }
 
 // Dial a ssh client connection from a ssh client configuration, retrying as necessary.
-func (con *Connection) Dial(ctx p.Context) (*ssh.Client, error) {
+func (con *Connection) Dial(ctx context.Context) (*ssh.Client, error) {
 	config, err := con.SShConfig()
 	if err != nil {
 		return nil, err

@@ -8,7 +8,7 @@ import pulumi
 import pulumi.runtime
 from typing import Any, Mapping, Optional, Sequence, Union, overload
 from .. import _utilities
-from .. import common
+from ._enums import *
 
 __all__ = ['CommandArgs', 'Command']
 
@@ -23,7 +23,7 @@ class CommandArgs:
                  dir: Optional[pulumi.Input[str]] = None,
                  environment: Optional[pulumi.Input[Mapping[str, pulumi.Input[str]]]] = None,
                  interpreter: Optional[pulumi.Input[Sequence[pulumi.Input[str]]]] = None,
-                 logging: Optional[pulumi.Input['common.Logging']] = None,
+                 logging: Optional[pulumi.Input['Logging']] = None,
                  stdin: Optional[pulumi.Input[str]] = None,
                  triggers: Optional[pulumi.Input[Sequence[Any]]] = None,
                  update: Optional[pulumi.Input[str]] = None):
@@ -117,11 +117,14 @@ class CommandArgs:
         :param pulumi.Input[Mapping[str, pulumi.Input[str]]] environment: Additional environment variables available to the command's process.
         :param pulumi.Input[Sequence[pulumi.Input[str]]] interpreter: The program and arguments to run the command.
                On Linux and macOS, defaults to: `["/bin/sh", "-c"]`. On Windows, defaults to: `["cmd", "/C"]`
-        :param pulumi.Input['common.Logging'] logging: If the command's stdout and stderr should be logged. This doesn't affect the capturing of
+        :param pulumi.Input['Logging'] logging: If the command's stdout and stderr should be logged. This doesn't affect the capturing of
                stdout and stderr as outputs. If there might be secrets in the output, you can disable logging here and mark the
                outputs as secret via 'additionalSecretOutputs'. Defaults to logging both stdout and stderr.
         :param pulumi.Input[str] stdin: Pass a string to the command's process as standard in
-        :param pulumi.Input[Sequence[Any]] triggers: Trigger replacements on changes to this input.
+        :param pulumi.Input[Sequence[Any]] triggers: Trigger a resource replacement on changes to any of these values. The
+               trigger values can be of any type. If a value is different in the current update compared to the
+               previous update, the resource will be replaced, i.e., the "create" command will be re-run.
+               Please see the resource documentation for examples.
         :param pulumi.Input[str] update: The command to run on update, if empty, create will 
                run again. The environment variables PULUMI_COMMAND_STDOUT and PULUMI_COMMAND_STDERR 
                are set to the stdout and stderr properties of the Command resource from previous 
@@ -332,7 +335,7 @@ class CommandArgs:
 
     @property
     @pulumi.getter
-    def logging(self) -> Optional[pulumi.Input['common.Logging']]:
+    def logging(self) -> Optional[pulumi.Input['Logging']]:
         """
         If the command's stdout and stderr should be logged. This doesn't affect the capturing of
         stdout and stderr as outputs. If there might be secrets in the output, you can disable logging here and mark the
@@ -341,7 +344,7 @@ class CommandArgs:
         return pulumi.get(self, "logging")
 
     @logging.setter
-    def logging(self, value: Optional[pulumi.Input['common.Logging']]):
+    def logging(self, value: Optional[pulumi.Input['Logging']]):
         pulumi.set(self, "logging", value)
 
     @property
@@ -360,7 +363,10 @@ class CommandArgs:
     @pulumi.getter
     def triggers(self) -> Optional[pulumi.Input[Sequence[Any]]]:
         """
-        Trigger replacements on changes to this input.
+        Trigger a resource replacement on changes to any of these values. The
+        trigger values can be of any type. If a value is different in the current update compared to the
+        previous update, the resource will be replaced, i.e., the "create" command will be re-run.
+        Please see the resource documentation for examples.
         """
         return pulumi.get(self, "triggers")
 
@@ -397,17 +403,103 @@ class Command(pulumi.CustomResource):
                  dir: Optional[pulumi.Input[str]] = None,
                  environment: Optional[pulumi.Input[Mapping[str, pulumi.Input[str]]]] = None,
                  interpreter: Optional[pulumi.Input[Sequence[pulumi.Input[str]]]] = None,
-                 logging: Optional[pulumi.Input['common.Logging']] = None,
+                 logging: Optional[pulumi.Input['Logging']] = None,
                  stdin: Optional[pulumi.Input[str]] = None,
                  triggers: Optional[pulumi.Input[Sequence[Any]]] = None,
                  update: Optional[pulumi.Input[str]] = None,
                  __props__=None):
         """
         A local command to be executed.
-        This command can be inserted into the life cycles of other resources using the
-        `dependsOn` or `parent` resource options. A command is considered to have
-        failed when it finished with a non-zero exit code. This will fail the CRUD step
-        of the `Command` resource.
+
+        This command can be inserted into the life cycles of other resources using the `dependsOn` or `parent` resource options. A command is considered to have failed when it finished with a non-zero exit code. This will fail the CRUD step of the `Command` resource.
+
+        ## Example Usage
+
+        ### Basic Example
+
+        This example shows the simplest use case, simply running a command on `create` in the Pulumi lifecycle.
+
+        ```python
+        import pulumi
+        from pulumi_command import local
+
+        random = local.Command("random",
+            create="openssl rand -hex 16"
+        )
+
+        pulumi.export("random", random.stdout)
+        ```
+
+        ### Invoking a Lambda during Pulumi Deployment
+
+        This example show using a local command to invoke an AWS Lambda once it's deployed. The Lambda invocation could also depend on other resources.
+
+        ```python
+        import pulumi
+        import json
+        import pulumi_aws as aws
+        import pulumi_command as command
+
+        lambda_role = aws.iam.Role("lambdaRole", assume_role_policy=json.dumps({
+            "Version": "2012-10-17",
+            "Statement": [{
+                "Action": "sts:AssumeRole",
+                "Effect": "Allow",
+                "Principal": {
+                    "Service": "lambda.amazonaws.com",
+                },
+            }],
+        }))
+
+        lambda_function = aws.lambda_.Function("lambdaFunction",
+            name="f",
+            publish=True,
+            role=lambda_role.arn,
+            handler="index.handler",
+            runtime=aws.lambda_.Runtime.NODE_JS20D_X,
+            code=pulumi.FileArchive("./handler"))
+
+        aws_config = pulumi.Config("aws")
+        aws_region = aws_config.require("region")
+
+        invoke_command = command.local.Command("invokeCommand",
+            create=f"aws lambda invoke --function-name \\"$FN\\" --payload '{{\\"stackName\\": \\"{pulumi.get_stack()}\\"}}' --cli-binary-format raw-in-base64-out out.txt >/dev/null && cat out.txt | tr -d '\\"'  && rm out.txt",
+            environment={
+                "FN": lambda_function.arn,
+                "AWS_REGION": aws_region,
+                "AWS_PAGER": "",
+            },
+            opts = pulumi.ResourceOptions(depends_on=[lambda_function]))
+
+        pulumi.export("output", invoke_command.stdout)
+        ```
+
+        ### Using Triggers
+
+        This example defines several trigger values of various kinds. Changes to any of them will cause `cmd` to be re-run.
+
+        ```python
+        import pulumi
+        import pulumi_command as command
+        import pulumi_random as random
+
+        foo = "foo"
+        file_asset_var = pulumi.FileAsset("Pulumi.yaml")
+        rand = random.RandomString("rand", length=5)
+        local_file = command.local.Command("localFile",
+            create="touch foo.txt",
+            archive_paths=["*.txt"])
+
+        cmd = command.local.Command("cmd",
+            create="echo create > op.txt",
+            delete="echo delete >> op.txt",
+            triggers=[
+                foo,
+                rand.result,
+                file_asset_var,
+                local_file.archive,
+            ])
+        ```
 
         :param str resource_name: The name of the resource.
         :param pulumi.ResourceOptions opts: Options for the resource.
@@ -499,11 +591,14 @@ class Command(pulumi.CustomResource):
         :param pulumi.Input[Mapping[str, pulumi.Input[str]]] environment: Additional environment variables available to the command's process.
         :param pulumi.Input[Sequence[pulumi.Input[str]]] interpreter: The program and arguments to run the command.
                On Linux and macOS, defaults to: `["/bin/sh", "-c"]`. On Windows, defaults to: `["cmd", "/C"]`
-        :param pulumi.Input['common.Logging'] logging: If the command's stdout and stderr should be logged. This doesn't affect the capturing of
+        :param pulumi.Input['Logging'] logging: If the command's stdout and stderr should be logged. This doesn't affect the capturing of
                stdout and stderr as outputs. If there might be secrets in the output, you can disable logging here and mark the
                outputs as secret via 'additionalSecretOutputs'. Defaults to logging both stdout and stderr.
         :param pulumi.Input[str] stdin: Pass a string to the command's process as standard in
-        :param pulumi.Input[Sequence[Any]] triggers: Trigger replacements on changes to this input.
+        :param pulumi.Input[Sequence[Any]] triggers: Trigger a resource replacement on changes to any of these values. The
+               trigger values can be of any type. If a value is different in the current update compared to the
+               previous update, the resource will be replaced, i.e., the "create" command will be re-run.
+               Please see the resource documentation for examples.
         :param pulumi.Input[str] update: The command to run on update, if empty, create will 
                run again. The environment variables PULUMI_COMMAND_STDOUT and PULUMI_COMMAND_STDERR 
                are set to the stdout and stderr properties of the Command resource from previous 
@@ -517,10 +612,96 @@ class Command(pulumi.CustomResource):
                  opts: Optional[pulumi.ResourceOptions] = None):
         """
         A local command to be executed.
-        This command can be inserted into the life cycles of other resources using the
-        `dependsOn` or `parent` resource options. A command is considered to have
-        failed when it finished with a non-zero exit code. This will fail the CRUD step
-        of the `Command` resource.
+
+        This command can be inserted into the life cycles of other resources using the `dependsOn` or `parent` resource options. A command is considered to have failed when it finished with a non-zero exit code. This will fail the CRUD step of the `Command` resource.
+
+        ## Example Usage
+
+        ### Basic Example
+
+        This example shows the simplest use case, simply running a command on `create` in the Pulumi lifecycle.
+
+        ```python
+        import pulumi
+        from pulumi_command import local
+
+        random = local.Command("random",
+            create="openssl rand -hex 16"
+        )
+
+        pulumi.export("random", random.stdout)
+        ```
+
+        ### Invoking a Lambda during Pulumi Deployment
+
+        This example show using a local command to invoke an AWS Lambda once it's deployed. The Lambda invocation could also depend on other resources.
+
+        ```python
+        import pulumi
+        import json
+        import pulumi_aws as aws
+        import pulumi_command as command
+
+        lambda_role = aws.iam.Role("lambdaRole", assume_role_policy=json.dumps({
+            "Version": "2012-10-17",
+            "Statement": [{
+                "Action": "sts:AssumeRole",
+                "Effect": "Allow",
+                "Principal": {
+                    "Service": "lambda.amazonaws.com",
+                },
+            }],
+        }))
+
+        lambda_function = aws.lambda_.Function("lambdaFunction",
+            name="f",
+            publish=True,
+            role=lambda_role.arn,
+            handler="index.handler",
+            runtime=aws.lambda_.Runtime.NODE_JS20D_X,
+            code=pulumi.FileArchive("./handler"))
+
+        aws_config = pulumi.Config("aws")
+        aws_region = aws_config.require("region")
+
+        invoke_command = command.local.Command("invokeCommand",
+            create=f"aws lambda invoke --function-name \\"$FN\\" --payload '{{\\"stackName\\": \\"{pulumi.get_stack()}\\"}}' --cli-binary-format raw-in-base64-out out.txt >/dev/null && cat out.txt | tr -d '\\"'  && rm out.txt",
+            environment={
+                "FN": lambda_function.arn,
+                "AWS_REGION": aws_region,
+                "AWS_PAGER": "",
+            },
+            opts = pulumi.ResourceOptions(depends_on=[lambda_function]))
+
+        pulumi.export("output", invoke_command.stdout)
+        ```
+
+        ### Using Triggers
+
+        This example defines several trigger values of various kinds. Changes to any of them will cause `cmd` to be re-run.
+
+        ```python
+        import pulumi
+        import pulumi_command as command
+        import pulumi_random as random
+
+        foo = "foo"
+        file_asset_var = pulumi.FileAsset("Pulumi.yaml")
+        rand = random.RandomString("rand", length=5)
+        local_file = command.local.Command("localFile",
+            create="touch foo.txt",
+            archive_paths=["*.txt"])
+
+        cmd = command.local.Command("cmd",
+            create="echo create > op.txt",
+            delete="echo delete >> op.txt",
+            triggers=[
+                foo,
+                rand.result,
+                file_asset_var,
+                local_file.archive,
+            ])
+        ```
 
         :param str resource_name: The name of the resource.
         :param CommandArgs args: The arguments to use to populate this resource's properties.
@@ -545,7 +726,7 @@ class Command(pulumi.CustomResource):
                  dir: Optional[pulumi.Input[str]] = None,
                  environment: Optional[pulumi.Input[Mapping[str, pulumi.Input[str]]]] = None,
                  interpreter: Optional[pulumi.Input[Sequence[pulumi.Input[str]]]] = None,
-                 logging: Optional[pulumi.Input['common.Logging']] = None,
+                 logging: Optional[pulumi.Input['Logging']] = None,
                  stdin: Optional[pulumi.Input[str]] = None,
                  triggers: Optional[pulumi.Input[Sequence[Any]]] = None,
                  update: Optional[pulumi.Input[str]] = None,
@@ -781,7 +962,7 @@ class Command(pulumi.CustomResource):
 
     @property
     @pulumi.getter
-    def logging(self) -> pulumi.Output[Optional['common.Logging']]:
+    def logging(self) -> pulumi.Output[Optional['Logging']]:
         """
         If the command's stdout and stderr should be logged. This doesn't affect the capturing of
         stdout and stderr as outputs. If there might be secrets in the output, you can disable logging here and mark the
@@ -817,7 +998,10 @@ class Command(pulumi.CustomResource):
     @pulumi.getter
     def triggers(self) -> pulumi.Output[Optional[Sequence[Any]]]:
         """
-        Trigger replacements on changes to this input.
+        Trigger a resource replacement on changes to any of these values. The
+        trigger values can be of any type. If a value is different in the current update compared to the
+        previous update, the resource will be replaced, i.e., the "create" command will be re-run.
+        Please see the resource documentation for examples.
         """
         return pulumi.get(self, "triggers")
 

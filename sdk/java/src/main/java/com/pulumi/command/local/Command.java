@@ -6,8 +6,8 @@ package com.pulumi.command.local;
 import com.pulumi.asset.Archive;
 import com.pulumi.asset.AssetOrArchive;
 import com.pulumi.command.Utilities;
-import com.pulumi.command.common.enums.Logging;
 import com.pulumi.command.local.CommandArgs;
+import com.pulumi.command.local.enums.Logging;
 import com.pulumi.core.Output;
 import com.pulumi.core.annotations.Export;
 import com.pulumi.core.annotations.ResourceType;
@@ -22,10 +22,150 @@ import javax.annotation.Nullable;
 
 /**
  * A local command to be executed.
- * This command can be inserted into the life cycles of other resources using the
- * `dependsOn` or `parent` resource options. A command is considered to have
- * failed when it finished with a non-zero exit code. This will fail the CRUD step
- * of the `Command` resource.
+ * 
+ * This command can be inserted into the life cycles of other resources using the `dependsOn` or `parent` resource options. A command is considered to have failed when it finished with a non-zero exit code. This will fail the CRUD step of the `Command` resource.
+ * 
+ * ## Example Usage
+ * 
+ * ### Basic Example
+ * 
+ * This example shows the simplest use case, simply running a command on `create` in the Pulumi lifecycle.
+ * 
+ * <pre>
+ * {@code
+ * package generated_program;
+ * 
+ * import com.pulumi.Context;
+ * import com.pulumi.Pulumi;
+ * import com.pulumi.command.local.Command;
+ * import com.pulumi.command.local.CommandArgs;
+ * 
+ * public class App {
+ *     public static void main(String[] args) {
+ *         Pulumi.run(App::stack);
+ *     }
+ * 
+ *     public static void stack(Context ctx) {
+ *         var random = new Command("random", CommandArgs.builder()
+ *             .create("openssl rand -hex 16")
+ *             .build());
+ * 
+ *         ctx.export("rand", random.stdout());
+ *     }
+ * }
+ * }
+ * </pre>
+ * 
+ * ### Invoking a Lambda during Pulumi Deployment
+ * 
+ * This example show using a local command to invoke an AWS Lambda once it&#39;s deployed. The Lambda invocation could also depend on other resources.
+ * 
+ * <pre>
+ * {@code
+ * package generated_program;
+ * 
+ * import com.pulumi.Context;
+ * import com.pulumi.Pulumi;
+ * import com.pulumi.aws.iam.Role;
+ * import com.pulumi.aws.iam.RoleArgs;
+ * import com.pulumi.aws.lambda.Function;
+ * import com.pulumi.aws.lambda.FunctionArgs;
+ * import com.pulumi.command.local.Command;
+ * import com.pulumi.command.local.CommandArgs;
+ * import static com.pulumi.codegen.internal.Serialization.*;
+ * import com.pulumi.resources.CustomResourceOptions;
+ * import com.pulumi.asset.FileArchive;
+ * import java.util.Map;
+ * 
+ * public class App {
+ *     public static void main(String[] args) {
+ *         Pulumi.run(App::stack);
+ *     }
+ * 
+ *     public static void stack(Context ctx) {
+ *         var awsConfig = ctx.config("aws");
+ *         var awsRegion = awsConfig.require("region");
+ * 
+ *         var lambdaRole = new Role("lambdaRole", RoleArgs.builder()
+ *                 .assumeRolePolicy(serializeJson(
+ *                         jsonObject(
+ *                                 jsonProperty("Version", "2012-10-17"),
+ *                                 jsonProperty("Statement", jsonArray(jsonObject(
+ *                                         jsonProperty("Action", "sts:AssumeRole"),
+ *                                         jsonProperty("Effect", "Allow"),
+ *                                         jsonProperty("Principal", jsonObject(
+ *                                                 jsonProperty("Service", "lambda.amazonaws.com")))))))))
+ *                 .build());
+ * 
+ *         var lambdaFunction = new Function("lambdaFunction", FunctionArgs.builder()
+ *                 .name("f")
+ *                 .publish(true)
+ *                 .role(lambdaRole.arn())
+ *                 .handler("index.handler")
+ *                 .runtime("nodejs20.x")
+ *                 .code(new FileArchive("./handler"))
+ *                 .build());
+ * 
+ *         // Work around the lack of Output.all for Maps in Java. We cannot use a plain Map because
+ *         // `lambdaFunction.arn()` is an Output<String>.
+ *         var invokeEnv = Output.tuple(
+ *                 Output.of("FN"), lambdaFunction.arn(),
+ *                 Output.of("AWS_REGION"), Output.of(awsRegion),
+ *                 Output.of("AWS_PAGER"), Output.of("")
+ *         ).applyValue(t -> Map.of(t.t1, t.t2, t.t3, t.t4, t.t5, t.t6));
+ * 
+ *         var invokeCommand = new Command("invokeCommand", CommandArgs.builder()
+ *                 .create(String.format(
+ *                         "aws lambda invoke --function-name \"$FN\" --payload '{\"stackName\": \"%s\"}' --cli-binary-format raw-in-base64-out out.txt >/dev/null && cat out.txt | tr -d '\"'  && rm out.txt",
+ *                         ctx.stackName()))
+ *                 .environment(invokeEnv)
+ *                 .build(),
+ *                 CustomResourceOptions.builder()
+ *                         .dependsOn(lambdaFunction)
+ *                         .build());
+ * 
+ *         ctx.export("output", invokeCommand.stdout());
+ *     }
+ * }
+ * }
+ * </pre>
+ * 
+ * ### Using Triggers
+ * 
+ * This example defines several trigger values of various kinds. Changes to any of them will cause `cmd` to be re-run.
+ * 
+ * <pre>
+ * {@code
+ * public class App {
+ *     public static void main(String[] args) {
+ *         Pulumi.run(App::stack);
+ *     }
+ * 
+ *     public static void stack(Context ctx) {
+ *         final var fileAssetVar = new FileAsset("Pulumi.yaml");
+ * 
+ *         var rand = new RandomString("rand", RandomStringArgs.builder()
+ *             .length(5)
+ *             .build());
+ * 
+ *         var localFile = new Command("localFile", CommandArgs.builder()
+ *             .create("touch foo.txt")
+ *             .archivePaths("*.txt")
+ *             .build());
+ * 
+ *         var cmd = new Command("cmd", CommandArgs.builder()
+ *             .create("echo create > op.txt")
+ *             .delete("echo delete >> op.txt")
+ *             .triggers(
+ *                 rand.result(),
+ *                 fileAssetVar,
+ *                 localFile.archive())
+ *             .build());
+ * 
+ *     }
+ * }
+ * }
+ * </pre>
  * 
  */
 @ResourceType(type="command:local:Command")
@@ -317,14 +457,20 @@ public class Command extends com.pulumi.resources.CustomResource {
         return this.stdout;
     }
     /**
-     * Trigger replacements on changes to this input.
+     * Trigger a resource replacement on changes to any of these values. The
+     * trigger values can be of any type. If a value is different in the current update compared to the
+     * previous update, the resource will be replaced, i.e., the &#34;create&#34; command will be re-run.
+     * Please see the resource documentation for examples.
      * 
      */
     @Export(name="triggers", refs={List.class,Object.class}, tree="[0,1]")
     private Output</* @Nullable */ List<Object>> triggers;
 
     /**
-     * @return Trigger replacements on changes to this input.
+     * @return Trigger a resource replacement on changes to any of these values. The
+     * trigger values can be of any type. If a value is different in the current update compared to the
+     * previous update, the resource will be replaced, i.e., the &#34;create&#34; command will be re-run.
+     * Please see the resource documentation for examples.
      * 
      */
     public Output<Optional<List<Object>>> triggers() {

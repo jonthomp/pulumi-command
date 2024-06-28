@@ -11,10 +11,147 @@ namespace Pulumi.Command.Local
 {
     /// <summary>
     /// A local command to be executed.
-    /// This command can be inserted into the life cycles of other resources using the
-    /// `dependsOn` or `parent` resource options. A command is considered to have
-    /// failed when it finished with a non-zero exit code. This will fail the CRUD step
-    /// of the `Command` resource.
+    /// 
+    /// This command can be inserted into the life cycles of other resources using the `dependsOn` or `parent` resource options. A command is considered to have failed when it finished with a non-zero exit code. This will fail the CRUD step of the `Command` resource.
+    /// 
+    /// ## Example Usage
+    /// 
+    /// ### Basic Example
+    /// 
+    /// This example shows the simplest use case, simply running a command on `create` in the Pulumi lifecycle.
+    /// 
+    /// ```csharp
+    /// using System.Collections.Generic;
+    /// using Pulumi;
+    /// using Pulumi.Command.Local;
+    /// 
+    /// await Deployment.RunAsync(() =&gt;
+    /// {
+    ///     var command = new Command("random", new CommandArgs
+    ///     {
+    ///         Create = "openssl rand -hex 16"
+    ///     });
+    /// 
+    ///     return new Dictionary&lt;string, object?&gt;
+    ///     {
+    ///         ["stdOut"] = command.Stdout
+    ///     };
+    /// });
+    /// ```
+    /// 
+    /// ### Invoking a Lambda during Pulumi Deployment
+    /// 
+    /// This example show using a local command to invoke an AWS Lambda once it's deployed. The Lambda invocation could also depend on other resources.
+    /// 
+    /// ```csharp
+    /// using System.Collections.Generic;
+    /// using System.Text.Json;
+    /// using Pulumi;
+    /// using Aws = Pulumi.Aws;
+    /// using Command = Pulumi.Command;
+    /// 
+    /// return await Deployment.RunAsync(() =&gt; 
+    /// {
+    ///     var awsConfig = new Config("aws");
+    /// 
+    ///     var lambdaRole = new Aws.Iam.Role("lambdaRole", new()
+    ///     {
+    ///         AssumeRolePolicy = JsonSerializer.Serialize(new Dictionary&lt;string, object?&gt;
+    ///         {
+    ///             ["Version"] = "2012-10-17",
+    ///             ["Statement"] = new[]
+    ///             {
+    ///                 new Dictionary&lt;string, object?&gt;
+    ///                 {
+    ///                     ["Action"] = "sts:AssumeRole",
+    ///                     ["Effect"] = "Allow",
+    ///                     ["Principal"] = new Dictionary&lt;string, object?&gt;
+    ///                     {
+    ///                         ["Service"] = "lambda.amazonaws.com",
+    ///                     },
+    ///                 },
+    ///             },
+    ///         }),
+    ///     });
+    /// 
+    ///     var lambdaFunction = new Aws.Lambda.Function("lambdaFunction", new()
+    ///     {
+    ///         Name = "f",
+    ///         Publish = true,
+    ///         Role = lambdaRole.Arn,
+    ///         Handler = "index.handler",
+    ///         Runtime = Aws.Lambda.Runtime.NodeJS20dX,
+    ///         Code = new FileArchive("./handler"),
+    ///     });
+    /// 
+    ///     var invokeCommand = new Command.Local.Command("invokeCommand", new()
+    ///     {
+    ///         Create = $"aws lambda invoke --function-name \"$FN\" --payload '{{\"stackName\": \"{Deployment.Instance.StackName}\"}}' --cli-binary-format raw-in-base64-out out.txt &gt;/dev/null &amp;&amp; cat out.txt | tr -d '\"'  &amp;&amp; rm out.txt",
+    ///         Environment = 
+    ///         {
+    ///             { "FN", lambdaFunction.Arn },
+    ///             { "AWS_REGION", awsConfig.Require("region") },
+    ///             { "AWS_PAGER", "" },
+    ///         },
+    ///     }, new CustomResourceOptions
+    ///     {
+    ///         DependsOn =
+    ///         {
+    ///             lambdaFunction,
+    ///         },
+    ///     });
+    /// 
+    ///     return new Dictionary&lt;string, object?&gt;
+    ///     {
+    ///         ["output"] = invokeCommand.Stdout,
+    ///     };
+    /// });
+    /// ```
+    /// 
+    /// ### Using Triggers
+    /// 
+    /// This example defines several trigger values of various kinds. Changes to any of them will cause `cmd` to be re-run.
+    /// 
+    /// ```csharp
+    /// using Pulumi;
+    /// using Command = Pulumi.Command;
+    /// using Random = Pulumi.Random;
+    /// 
+    /// return await Deployment.RunAsync(() =&gt;
+    /// {
+    ///     var str = "foo";
+    /// 
+    ///     var fileAssetVar = new FileAsset("Pulumi.yaml");
+    /// 
+    ///     var rand = new Random.RandomString("rand", new()
+    ///     {
+    ///         Length = 5,
+    ///     });
+    /// 
+    ///     var localFile = new Command.Local.Command("localFile", new()
+    ///     {
+    ///         Create = "touch foo.txt",
+    ///         ArchivePaths = new[]
+    ///         {
+    ///             "*.txt",
+    ///         },
+    ///     });
+    /// 
+    ///     var cmd = new Command.Local.Command("cmd", new()
+    ///     {
+    ///         Create = "echo create &gt; op.txt",
+    ///         Delete = "echo delete &gt;&gt; op.txt",
+    ///         Triggers = new object[]
+    ///         {
+    ///             str,
+    ///             rand.Result,
+    ///             fileAssetVar,
+    ///             localFile.Archive,
+    ///         },
+    ///     });
+    /// 
+    /// });
+    /// ```
     /// </summary>
     [CommandResourceType("command:local:Command")]
     public partial class Command : global::Pulumi.CustomResource
@@ -166,7 +303,7 @@ namespace Pulumi.Command.Local
         /// outputs as secret via 'additionalSecretOutputs'. Defaults to logging both stdout and stderr.
         /// </summary>
         [Output("logging")]
-        public Output<Pulumi.Command.Common.Logging?> Logging { get; private set; } = null!;
+        public Output<Pulumi.Command.Local.Logging?> Logging { get; private set; } = null!;
 
         /// <summary>
         /// The standard error of the command's process
@@ -187,7 +324,10 @@ namespace Pulumi.Command.Local
         public Output<string> Stdout { get; private set; } = null!;
 
         /// <summary>
-        /// Trigger replacements on changes to this input.
+        /// Trigger a resource replacement on changes to any of these values. The
+        /// trigger values can be of any type. If a value is different in the current update compared to the
+        /// previous update, the resource will be replaced, i.e., the "create" command will be re-run.
+        /// Please see the resource documentation for examples.
         /// </summary>
         [Output("triggers")]
         public Output<ImmutableArray<object>> Triggers { get; private set; } = null!;
@@ -408,7 +548,7 @@ namespace Pulumi.Command.Local
         /// outputs as secret via 'additionalSecretOutputs'. Defaults to logging both stdout and stderr.
         /// </summary>
         [Input("logging")]
-        public Input<Pulumi.Command.Common.Logging>? Logging { get; set; }
+        public Input<Pulumi.Command.Local.Logging>? Logging { get; set; }
 
         /// <summary>
         /// Pass a string to the command's process as standard in
@@ -420,7 +560,10 @@ namespace Pulumi.Command.Local
         private InputList<object>? _triggers;
 
         /// <summary>
-        /// Trigger replacements on changes to this input.
+        /// Trigger a resource replacement on changes to any of these values. The
+        /// trigger values can be of any type. If a value is different in the current update compared to the
+        /// previous update, the resource will be replaced, i.e., the "create" command will be re-run.
+        /// Please see the resource documentation for examples.
         /// </summary>
         public InputList<object> Triggers
         {

@@ -13,7 +13,6 @@
         "strict": true
     },
     "files": [
-        "common/index.ts",
         "index.ts",
         "local/command.ts",
         "local/index.ts",
@@ -21,9 +20,11 @@
         "provider.ts",
         "remote/command.ts",
         "remote/copyFile.ts",
+        "remote/copyToRemote.ts",
         "remote/index.ts",
-        "types/enums/common/index.ts",
         "types/enums/index.ts",
+        "types/enums/local/index.ts",
+        "types/enums/remote/index.ts",
         "types/index.ts",
         "types/input.ts",
         "types/output.ts",

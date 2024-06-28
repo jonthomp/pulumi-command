@@ -16,7 +16,6 @@ package remote
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -29,44 +28,35 @@ import (
 )
 
 func TestOptionalLogging(t *testing.T) {
-	const (
-		host = "localhost"
-		port = 2222
-	)
-
-	// This SSH server always writes "foo" to stdout and "bar" to stderr, no matter the command.
-	server := &ssh.Server{
-		Addr: fmt.Sprintf("%s:%d", host, port),
-		Handler: func(s ssh.Session) {
-			_, err := io.WriteString(s, "foo")
-			require.NoError(t, err)
-			_, err = io.WriteString(s.Stderr(), "bar")
-			require.NoError(t, err)
-		},
-	}
-	go func() {
-		require.NoError(t, server.ListenAndServe())
-	}()
-	t.Cleanup(func() {
-		_ = server.Close()
-	})
-
-	for _, logMode := range common.Logging.Values(common.LogStdoutAndStderr) {
+	for _, sharedLogMode := range Logging.Values(LogStdoutAndStderr) {
+		// Get a copy of the log mode that doesn't get changed by the next iteration in the for loop,
+		// to allow running in parallel.
+		// See 'The long-standing "for" loop gotcha' here: https://go.dev/blog/go1.22
+		// This can be removed after upgrading to go 1.22.
+		logMode := sharedLogMode
 		t.Run(logMode.Name, func(t *testing.T) {
+			t.Parallel()
+
+			// This SSH server always writes "foo" to stdout and "bar" to stderr, no matter the command.
+			server := testutil.NewTestSshServer(t, func(s ssh.Session) {
+				_, err := io.WriteString(s, "foo")
+				require.NoError(t, err)
+				_, err = io.WriteString(s.Stderr(), "bar")
+				require.NoError(t, err)
+			})
+
 			cmd := Command{}
 
 			ctx := testutil.TestContext{Context: context.Background()}
 			input := CommandInputs{
-				CommonInputs: common.CommonInputs{
-					Logging: &logMode.Value,
-				},
+				Logging: &logMode.Value,
 				ResourceInputs: common.ResourceInputs{
 					Create: pulumi.StringRef("ignored"),
 				},
 				Connection: &Connection{
 					connectionBase: connectionBase{
-						Host:           pulumi.StringRef(host),
-						Port:           pulumi.Float64Ref(float64(port)),
+						Host:           pulumi.StringRef(server.Host),
+						Port:           pulumi.Float64Ref(float64(server.Port)),
 						User:           pulumi.StringRef("user"), // unused but prevents nil panic
 						PerDialTimeout: pulumi.IntRef(1),         // unused but prevents nil panic
 					},

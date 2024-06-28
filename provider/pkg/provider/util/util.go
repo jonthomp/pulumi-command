@@ -16,8 +16,11 @@ package util
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"sync"
+
+	"github.com/pulumi/pulumi-command/provider/pkg/provider/util/testutil"
 
 	p "github.com/pulumi/pulumi-go-provider"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
@@ -26,11 +29,26 @@ import (
 const PULUMI_COMMAND_STDOUT = "PULUMI_COMMAND_STDOUT"
 const PULUMI_COMMAND_STDERR = "PULUMI_COMMAND_STDERR"
 
-func LogOutput(ctx p.Context, r io.Reader, doneCh chan<- struct{}, severity diag.Severity) {
+func LogOutput(ctx context.Context, r io.Reader, doneCh chan<- struct{}, severity diag.Severity) {
 	defer close(doneCh)
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		ctx.LogStatus(severity, scanner.Text())
+		msg := scanner.Text()
+		l := p.GetLogger(ctx)
+		switch severity {
+		case diag.Info:
+			l.InfoStatus(msg)
+		case diag.Warning:
+			l.WarningStatus(msg)
+		case diag.Error:
+			l.ErrorStatus(msg)
+		default:
+			l.DebugStatus(msg)
+		}
+
+		if testCtx, ok := ctx.(*testutil.TestContext); ok {
+			testCtx.Log(severity, msg)
+		}
 	}
 }
 
