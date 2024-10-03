@@ -4,9 +4,14 @@
 
 import copy
 import warnings
+import sys
 import pulumi
 import pulumi.runtime
 from typing import Any, Mapping, Optional, Sequence, Union, overload
+if sys.version_info >= (3, 11):
+    from typing import NotRequired, TypedDict, TypeAlias
+else:
+    from typing_extensions import NotRequired, TypedDict, TypeAlias
 from .. import _utilities
 from . import outputs
 from ._inputs import *
@@ -87,7 +92,7 @@ class CopyFile(pulumi.CustomResource):
     def __init__(__self__,
                  resource_name: str,
                  opts: Optional[pulumi.ResourceOptions] = None,
-                 connection: Optional[pulumi.Input[pulumi.InputType['ConnectionArgs']]] = None,
+                 connection: Optional[pulumi.Input[Union['ConnectionArgs', 'ConnectionArgsDict']]] = None,
                  local_path: Optional[pulumi.Input[str]] = None,
                  remote_path: Optional[pulumi.Input[str]] = None,
                  triggers: Optional[pulumi.Input[Sequence[Any]]] = None,
@@ -97,7 +102,7 @@ class CopyFile(pulumi.CustomResource):
 
         :param str resource_name: The name of the resource.
         :param pulumi.ResourceOptions opts: Options for the resource.
-        :param pulumi.Input[pulumi.InputType['ConnectionArgs']] connection: The parameters with which to connect to the remote host.
+        :param pulumi.Input[Union['ConnectionArgs', 'ConnectionArgsDict']] connection: The parameters with which to connect to the remote host.
         :param pulumi.Input[str] local_path: The path of the file to be copied.
         :param pulumi.Input[str] remote_path: The destination path in the remote host.
         :param pulumi.Input[Sequence[Any]] triggers: Trigger replacements on changes to this input.
@@ -126,7 +131,7 @@ class CopyFile(pulumi.CustomResource):
     def _internal_init(__self__,
                  resource_name: str,
                  opts: Optional[pulumi.ResourceOptions] = None,
-                 connection: Optional[pulumi.Input[pulumi.InputType['ConnectionArgs']]] = None,
+                 connection: Optional[pulumi.Input[Union['ConnectionArgs', 'ConnectionArgsDict']]] = None,
                  local_path: Optional[pulumi.Input[str]] = None,
                  remote_path: Optional[pulumi.Input[str]] = None,
                  triggers: Optional[pulumi.Input[Sequence[Any]]] = None,
