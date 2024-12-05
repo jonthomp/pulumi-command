@@ -12,7 +12,6 @@ import * as utilities from "../utilities";
  * This command will always be run on any preview or deployment. Use `local.Command` to avoid duplicating executions.
  */
 export function run(args: RunArgs, opts?: pulumi.InvokeOptions): Promise<RunResult> {
-
     opts = pulumi.mergeOptions(utilities.resourceOptsDefaults(), opts || {});
     return pulumi.runtime.invoke("command:local:run", {
         "addPreviousOutputInEnv": args.addPreviousOutputInEnv,
@@ -285,8 +284,19 @@ export interface RunResult {
  * A local command to be executed.
  * This command will always be run on any preview or deployment. Use `local.Command` to avoid duplicating executions.
  */
-export function runOutput(args: RunOutputArgs, opts?: pulumi.InvokeOptions): pulumi.Output<RunResult> {
-    return pulumi.output(args).apply((a: any) => run(a, opts))
+export function runOutput(args: RunOutputArgs, opts?: pulumi.InvokeOutputOptions): pulumi.Output<RunResult> {
+    opts = pulumi.mergeOptions(utilities.resourceOptsDefaults(), opts || {});
+    return pulumi.runtime.invokeOutput("command:local:run", {
+        "addPreviousOutputInEnv": args.addPreviousOutputInEnv,
+        "archivePaths": args.archivePaths,
+        "assetPaths": args.assetPaths,
+        "command": args.command,
+        "dir": args.dir,
+        "environment": args.environment,
+        "interpreter": args.interpreter,
+        "logging": args.logging,
+        "stdin": args.stdin,
+    }, opts);
 }
 
 export interface RunOutputArgs {
